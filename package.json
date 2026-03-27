@@ -1,0 +1,10 @@
+{
+  "name": "whisper-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static frontend plus Cloudflare Worker API for Whisper transcription.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  }
+}

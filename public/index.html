@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whisper 全参数转写台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="page-bg text-slate-900 antialiased">
+  <main class="mx-auto min-h-screen max-w-4xl px-4 py-4 sm:px-5 lg:px-6 lg:py-5">
+    <form id="uploadForm" class="glass-panel p-4 sm:p-5 lg:p-6">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 class="text-xl font-black tracking-tight text-slate-900 sm:text-2xl">音频转写</h1>
+          </div>
+        </div>
+
+        <div class="mt-5 grid gap-4 lg:grid-cols-2">
+          <div class="field-block lg:col-span-2">
+            <label for="audioFile" class="field-label">音频文件</label>
+            <div class="field-shell dropzone" id="dropzone">
+              <input type="file" id="audioFile" accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm,audio/*" required class="file-input">
+            </div>
+            <p class="field-hint" id="dropzoneHint">支持 `MP3`、`MP4`、`MPEG`、`MPGA`、`M4A`、`WAV`、`WEBM`，可点击选择，也可直接拖拽文件到这里。</p>
+            <p class="file-pill" id="fileMeta">尚未选择文件</p>
+          </div>
+
+          <div class="field-block lg:col-span-2">
+            <label for="mode" class="field-label">处理模式</label>
+            <div class="custom-select" data-select-id="mode">
+              <select id="mode" class="sr-only field-native-select">
+                <option value="zh_transcribe">中文语音转中文</option>
+                <option value="foreign_transcribe">外语语音保留原文</option>
+                <option value="translate_to_zh">外语语音转中文</option>
+              </select>
+              <button type="button" class="custom-select-trigger">
+                <span class="custom-select-label"></span>
+                <span class="custom-select-icon"></span>
+              </button>
+              <div class="custom-select-menu hidden"></div>
+            </div>
+            <p class="field-hint" id="modeHint">中文语音转中文模式下，默认锁定为中文更稳；如果你的内容主要是其它语言，请切换其它模式。</p>
+          </div>
+
+          <div class="field-block lg:col-span-2">
+            <label for="languagePreset" class="field-label">语言选择</label>
+            <div class="grid gap-3 md:grid-cols-[minmax(190px,220px)_minmax(0,1fr)]">
+              <div class="custom-select" data-select-id="languagePreset">
+                <select id="languagePreset" class="sr-only field-native-select">
+                  <option value="auto">自动检测</option>
+                  <option value="zh">中文 zh</option>
+                  <option value="en">英语 en</option>
+                  <option value="ja">日语 ja</option>
+                  <option value="ko">韩语 ko</option>
+                  <option value="fr">法语 fr</option>
+                  <option value="de">德语 de</option>
+                  <option value="ru">俄语 ru</option>
+                  <option value="custom">自定义代码</option>
+                </select>
+                <button type="button" class="custom-select-trigger">
+                  <span class="custom-select-label"></span>
+                  <span class="custom-select-icon"></span>
+                </button>
+                <div class="custom-select-menu hidden"></div>
+              </div>
+              <div class="field-shell">
+                <input type="text" id="language" class="field-control" placeholder="留空自动检测，或输入自定义语言代码">
+              </div>
+            </div>
+            <p class="field-hint" id="languageHint">可以先选常用语言；如果需要其它语种，直接在右侧输入语言代码即可。</p>
+          </div>
+
+          <div class="field-block">
+            <label for="initial_prompt" class="field-label">初始提示</label>
+            <div class="field-shell">
+              <input type="text" id="initial_prompt" class="field-control" placeholder="例如：以下是普通话访谈，包含产品和技术名词。">
+            </div>
+            <p class="field-hint">用于提前告诉模型语境、专有名词或说话场景。</p>
+          </div>
+
+          <div class="field-block">
+            <label for="prefix" class="field-label">输出前缀</label>
+            <div class="field-shell">
+              <input type="text" id="prefix" class="field-control" placeholder="例如：主持人：">
+            </div>
+            <p class="field-hint">用于引导句式或结果开头，适合固定格式内容。</p>
+          </div>
+        </div>
+
+        <div class="mt-4 grid gap-3 md:grid-cols-2">
+          <label class="toggle-card" for="vad_filter">
+            <input type="checkbox" id="vad_filter" checked class="toggle-checkbox">
+            <span>
+              <strong class="toggle-title">启用 VAD 过滤</strong>
+              <span class="toggle-copy">先做语音活动检测，跳过部分静音和无效片段。大多数场景建议开启。</span>
+            </span>
+          </label>
+
+          <label class="toggle-card" for="condition_on_previous_text">
+            <input type="checkbox" id="condition_on_previous_text" checked class="toggle-checkbox">
+            <span>
+              <strong class="toggle-title">参考上一段文本</strong>
+              <span class="toggle-copy">有利于上下文连贯；如果长音频出现循环重复或串段，可关闭。</span>
+            </span>
+          </label>
+        </div>
+
+        <details class="advanced-shell mt-5">
+          <summary class="advanced-summary">
+            <span>
+              <span class="block text-base font-bold text-slate-900">高级参数</span>
+              <span class="mt-1 block text-sm font-medium text-slate-500">准确率、速度与抗幻觉能力都可以继续微调</span>
+            </span>
+            <span class="summary-mark">展开调节</span>
+          </summary>
+
+          <div class="border-t border-white/60 px-0 pt-5">
+            <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+              <div class="field-block">
+                <label for="preset" class="field-label">推荐预设</label>
+                <div class="custom-select" data-select-id="preset">
+                  <select id="preset" class="sr-only field-native-select">
+                    <option value="balanced">标准默认</option>
+                    <option value="fast">快速优先</option>
+                    <option value="anti_loop">长音频抗重复</option>
+                    <option value="noisy">嘈杂环境</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                  <button type="button" class="custom-select-trigger">
+                    <span class="custom-select-label"></span>
+                    <span class="custom-select-icon"></span>
+                  </button>
+                  <div class="custom-select-menu hidden"></div>
+                </div>
+              </div>
+              <button type="button" class="ghost-button" id="resetAdvancedBtn">恢复模型默认</button>
+            </div>
+
+            <p class="mt-3 text-sm leading-6 text-teal-700" id="presetHint"></p>
+
+            <div class="mt-4 grid gap-3 md:grid-cols-2">
+              <div class="field-block">
+                <label for="beam_size" class="field-label">beam_size</label>
+                <div class="field-shell">
+                  <input type="number" id="beam_size" min="1" step="1" value="5" class="field-control">
+                </div>
+                <p class="field-hint">束搜索宽度。更高通常更准，但更慢；默认 5。</p>
+              </div>
+
+              <div class="field-block">
+                <label for="no_speech_threshold" class="field-label">no_speech_threshold</label>
+                <div class="field-shell">
+                  <input type="number" id="no_speech_threshold" min="0" max="1" step="0.05" value="0.6" class="field-control">
+                </div>
+                <p class="field-hint">静音判断阈值。更高更容易跳过静音，也更可能漏掉轻声。</p>
+              </div>
+
+              <div class="field-block">
+                <label for="compression_ratio_threshold" class="field-label">compression_ratio_threshold</label>
+                <div class="field-shell">
+                  <input type="number" id="compression_ratio_threshold" min="0" step="0.1" value="2.4" class="field-control">
+                </div>
+                <p class="field-hint">过滤重复或异常压缩片段。更严格可减少幻觉，过严可能丢内容。</p>
+              </div>
+
+              <div class="field-block">
+                <label for="log_prob_threshold" class="field-label">log_prob_threshold</label>
+                <div class="field-shell">
+                  <input type="number" id="log_prob_threshold" step="0.1" value="-1" class="field-control">
+                </div>
+                <p class="field-hint">低置信度过滤阈值。数值调高会更保守，噪声环境下可适当上调。</p>
+              </div>
+
+              <div class="field-block md:col-span-2">
+                <label for="hallucination_silence_threshold" class="field-label">hallucination_silence_threshold</label>
+                <div class="field-shell">
+                  <input type="number" id="hallucination_silence_threshold" min="0" step="0.1" placeholder="留空表示使用模型默认策略" class="field-control">
+                </div>
+                <p class="field-hint">静音抗幻觉阈值，适合会议停顿多、环境音多、模型容易在空白段编字幕的场景。</p>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p class="max-w-2xl text-[13px] leading-6 text-slate-600">建议：中文音频默认用“中文语音转中文”；外语要直接变中文字幕时，优先手动指定源语言代码。</p>
+          <button type="submit" class="primary-button">开始转写</button>
+        </div>
+      </form>
+
+    <div id="progressContainer" class="glass-panel mt-4 hidden p-4 sm:p-5">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-bold text-slate-900">正在处理</h2>
+          <p class="mt-1 text-sm text-slate-500">正在提交音频并等待 Whisper 返回结果，请稍候。</p>
+        </div>
+        <div class="status-chip">处理中</div>
+      </div>
+      <div class="mt-4 h-3 overflow-hidden rounded-full bg-amber-100/70">
+        <div class="progress h-full rounded-full bg-gradient-to-r from-orange-500 via-orange-400 to-amber-300" id="progressBar"></div>
+      </div>
+    </div>
+
+    <section class="glass-panel mt-4 flex flex-col p-4 sm:p-5 lg:p-6">
+      <div class="flex flex-col gap-3 border-b border-white/60 pb-4 lg:flex-row lg:items-start lg:justify-between">
+        <div class="max-w-2xl">
+          <h2 class="text-lg font-bold text-slate-900">结果预览</h2>
+          <p class="mt-1.5 text-[13px] leading-6 text-slate-600">支持在 `SRT`、`VTT`、`TXT` 和 `Raw JSON` 之间切换；外语转中文模式会直接展示翻译后的中文结果。</p>
+          <p id="metadata" class="mt-2 text-[13px] leading-6 text-teal-700"></p>
+        </div>
+
+        <div class="flex w-full flex-col gap-2.5 lg:w-auto lg:min-w-[220px]">
+          <div class="field-block">
+            <label for="outputFormat" class="field-label">输出格式</label>
+            <div class="custom-select" data-select-id="outputFormat">
+              <select id="outputFormat" class="sr-only field-native-select">
+                <option value="srt">SRT 字幕</option>
+                <option value="vtt">VTT 网页字幕</option>
+                <option value="txt">TXT 纯文本</option>
+                <option value="json">Raw JSON</option>
+              </select>
+              <button type="button" class="custom-select-trigger">
+                <span class="custom-select-label"></span>
+                <span class="custom-select-icon"></span>
+              </button>
+              <div class="custom-select-menu hidden"></div>
+            </div>
+          </div>
+          <button id="downloadBtn" class="success-button" disabled>下载结果</button>
+        </div>
+      </div>
+
+      <div class="mt-4 flex-1">
+        <textarea id="result" readonly placeholder="转写完成后会在这里显示结果。" class="result-area"></textarea>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
