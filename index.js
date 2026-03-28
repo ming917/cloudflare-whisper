@@ -15,7 +15,7 @@ export default {
 };
 
 function isApiRoute(pathname) {
-  return pathname === '/raw' || pathname === '/srt' || pathname === '/vtt' || pathname === '/txt';
+  return pathname === '/raw' || pathname === '/srt' || pathname === '/vtt' || pathname === '/txt' || pathname === '/subtitle';
 }
 
 async function handleApiRequest(request, env, url) {
@@ -31,6 +31,10 @@ async function handleApiRequest(request, env, url) {
       { error: 'Workers AI binding is not configured. Add [ai] binding = "AI" to wrangler.toml and redeploy.' },
       500
     );
+  }
+
+  if (url.pathname === '/subtitle') {
+    return handleSubtitleTranslationRequest(request, env, url);
   }
 
   let requestConfig;
@@ -80,6 +84,47 @@ async function handleApiRequest(request, env, url) {
   }
 
   return new Response('Not Found', { status: 404, headers: buildNoStoreHeaders() });
+}
+
+async function handleSubtitleTranslationRequest(request, env, url) {
+  const sourceLanguage = normalizeTranslationLanguage(getTrimmedParam(url.searchParams.get('language')) || '');
+
+  if (!sourceLanguage) {
+    return buildJsonResponse(
+      { error: 'Standalone subtitle translation requires a source language code such as en, ja, ko, fr, or de.' },
+      400
+    );
+  }
+
+  let subtitleText;
+  try {
+    subtitleText = await request.text();
+  } catch (error) {
+    return buildJsonResponse({ error: 'Could not read the uploaded subtitle file.' }, 400);
+  }
+
+  let subtitleDocument;
+  try {
+    subtitleDocument = parseSubtitleDocument(
+      subtitleText,
+      getTrimmedParam(url.searchParams.get('filename')) || 'subtitles.srt'
+    );
+  } catch (error) {
+    return buildJsonResponse({ error: getPublicErrorMessage(error) }, 400);
+  }
+
+  try {
+    const translatedDocument = await translateSubtitleDocumentToChinese(subtitleDocument, sourceLanguage, env);
+    return buildJsonResponse({
+      mode: 'subtitle_to_zh',
+      response: translatedDocument.response,
+      original_response: translatedDocument.originalResponse,
+      translation: translatedDocument.translation,
+    });
+  } catch (error) {
+    console.error('Subtitle translation request failed');
+    return buildJsonResponse({ error: getPublicErrorMessage(error) }, 500);
+  }
 }
 
 async function buildRequestConfig(request, url) {
@@ -191,8 +236,10 @@ async function buildProcessedResponse(whisperResponse, requestConfig, env) {
 }
 
 async function translateWhisperResponseToChinese(whisperResponse, sourceLanguage, env) {
-  const translatedText = await translateText(whisperResponse.text || '', sourceLanguage, 'zh', env);
-  const translatedSegments = await translateSegments(whisperResponse.segments || [], sourceLanguage, env);
+  const translatedSegments = await translateSegments(whisperResponse.segments || [], sourceLanguage, 'zh', env);
+  const translatedText = translatedSegments.length
+    ? collectSegmentText(translatedSegments, ' ')
+    : await translateText(whisperResponse.text || '', sourceLanguage, 'zh', env);
 
   return addTranslationMetadata(
     {
@@ -207,23 +254,173 @@ async function translateWhisperResponseToChinese(whisperResponse, sourceLanguage
       source_language: sourceLanguage,
       target_language: 'zh',
       translated_text: translatedText,
+      segment_count: translatedSegments.length,
     }
   );
 }
 
-async function translateSegments(segments, sourceLanguage, env) {
+async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLanguage, env) {
+  const translatedSegments = await translateSegments(subtitleDocument.segments, sourceLanguage, 'zh', env);
+  const translatedText = collectSegmentText(translatedSegments, '\n');
+  const translatedResponse = addTranslationMetadata(
+    {
+      text: translatedText,
+      segments: translatedSegments,
+      vtt: convertSegmentsToVTT(translatedSegments),
+      subtitle_format: subtitleDocument.format,
+    },
+    {
+      enabled: true,
+      skipped: false,
+      source_language: sourceLanguage,
+      target_language: 'zh',
+      translated_text: translatedText,
+      segment_count: translatedSegments.length,
+    },
+    {
+      subtitle_format: subtitleDocument.format,
+      segment_count: translatedSegments.length,
+    }
+  );
+
+  return {
+    response: translatedResponse,
+    originalResponse: {
+      text: subtitleDocument.text,
+      segments: subtitleDocument.segments,
+      vtt: convertSegmentsToVTT(subtitleDocument.segments),
+      subtitle_format: subtitleDocument.format,
+    },
+    translation: translatedResponse.translation_info,
+  };
+}
+
+async function translateSegments(segments, sourceLanguage, targetLanguage, env) {
   if (!Array.isArray(segments) || segments.length === 0) {
     return [];
   }
 
-  return mapWithConcurrency(segments, 4, async function(segment) {
-    if (!segment || !segment.text) return segment;
-    const translatedText = await translateText(segment.text, sourceLanguage, 'zh', env);
-    return {
-      ...segment,
-      text: translatedText,
-    };
-  });
+  const batches = createTranslationBatches(segments, 12, 1600);
+  const translated = [];
+
+  for (let i = 0; i < batches.length; i++) {
+    const translatedBatch = await translateSegmentBatch(batches[i], sourceLanguage, targetLanguage, env);
+    translated.push(...translatedBatch);
+  }
+
+  return translated;
+}
+
+async function translateSegmentBatch(segments, sourceLanguage, targetLanguage, env) {
+  if (segments.length === 1) {
+    const segment = segments[0];
+    if (!segment || !segment.text) return [segment];
+    const translatedText = await translateText(segment.text, sourceLanguage, targetLanguage, env);
+    return [
+      {
+        ...segment,
+        text: translatedText,
+      },
+    ];
+  }
+
+  const taggedPayload = buildTaggedTranslationPayload(segments);
+  const translatedPayload = await translateText(taggedPayload, sourceLanguage, targetLanguage, env);
+  const extractedTexts = extractTaggedTranslations(translatedPayload, segments.length);
+
+  if (extractedTexts) {
+    return segments.map(function(segment, index) {
+      return {
+        ...segment,
+        text: extractedTexts[index] || segment.text,
+      };
+    });
+  }
+
+  const midpoint = Math.ceil(segments.length / 2);
+  const left = await translateSegmentBatch(segments.slice(0, midpoint), sourceLanguage, targetLanguage, env);
+  const right = await translateSegmentBatch(segments.slice(midpoint), sourceLanguage, targetLanguage, env);
+  return left.concat(right);
+}
+
+function createTranslationBatches(segments, maxItems, maxCharacters) {
+  const batches = [];
+  let currentBatch = [];
+  let currentCharacters = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!segment || !segment.text) {
+      currentBatch.push(segment);
+      continue;
+    }
+
+    const estimatedSize = normalizeInlineText(segment.text).length + 12;
+    const shouldStartNewBatch =
+      currentBatch.length > 0 && (currentBatch.length >= maxItems || currentCharacters + estimatedSize > maxCharacters);
+
+    if (shouldStartNewBatch) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentCharacters = 0;
+    }
+
+    currentBatch.push(segment);
+    currentCharacters += estimatedSize;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
+}
+
+function buildTaggedTranslationPayload(segments) {
+  return segments
+    .map(function(segment, index) {
+      return '[[' + index + ']] ' + normalizeInlineText(segment && segment.text ? segment.text : '');
+    })
+    .join('\n');
+}
+
+function extractTaggedTranslations(text, expectedCount) {
+  const normalized = normalizeLineEndings(text);
+  const markers = [];
+  const markerPattern = /\[\[(\d+)\]\]/g;
+  let match;
+
+  while ((match = markerPattern.exec(normalized)) !== null) {
+    markers.push({
+      index: Number(match[1]),
+      start: match.index,
+      end: markerPattern.lastIndex,
+    });
+  }
+
+  if (markers.length !== expectedCount) {
+    return null;
+  }
+
+  const extracted = new Array(expectedCount);
+
+  for (let i = 0; i < markers.length; i++) {
+    const marker = markers[i];
+    if (!Number.isInteger(marker.index) || marker.index < 0 || marker.index >= expectedCount) {
+      return null;
+    }
+
+    const nextStart = i + 1 < markers.length ? markers[i + 1].start : normalized.length;
+    extracted[marker.index] = normalized.slice(marker.end, nextStart).trim();
+  }
+
+  if (extracted.some(function(value) {
+    return typeof value !== 'string';
+  })) {
+    return null;
+  }
+
+  return extracted;
 }
 
 async function translateText(text, sourceLanguage, targetLanguage, env) {
@@ -263,11 +460,12 @@ async function mapWithConcurrency(items, limit, mapper) {
   return results;
 }
 
-function addTranslationMetadata(response, translationInfo) {
+function addTranslationMetadata(response, translationInfo, extraTranscriptionInfo) {
   return {
     ...response,
     transcription_info: {
       ...(response.transcription_info || {}),
+      ...(extraTranscriptionInfo || {}),
       translation_source_language: translationInfo.source_language,
       translation_target_language: translationInfo.target_language,
       translation_applied: Boolean(translationInfo.enabled),
@@ -326,6 +524,10 @@ function getPublicErrorMessage(error) {
 
   if (message.includes('resource limits') || message.includes('1102')) {
     return 'Worker exceeded resource limits. Please retry with a shorter or smaller audio file.';
+  }
+
+  if (message.includes('Too many subrequests')) {
+    return 'This request triggered too many Worker subrequests. The audio path now batches translation more aggressively, but for very long files you should still shorten the upload or translate an exported subtitle file separately.';
   }
 
   if (message) {
@@ -512,4 +714,162 @@ function normalizeTranslationLanguage(value) {
   if (/^[a-z]{2,3}$/.test(simple)) return simple;
 
   return null;
+}
+
+function parseSubtitleDocument(text, filename) {
+  const normalizedText = normalizeLineEndings(text || '').trim();
+  if (!normalizedText) {
+    throw new Error('Subtitle file is empty.');
+  }
+
+  const format = detectSubtitleFormat(filename, normalizedText);
+  let segments = [];
+
+  if (format === 'srt') {
+    segments = parseSRTSegments(normalizedText);
+  } else if (format === 'vtt') {
+    segments = parseVTTSegments(normalizedText);
+  }
+
+  if (!segments.length) {
+    throw new Error('Could not parse subtitle cues. Please upload a valid SRT or VTT subtitle file.');
+  }
+
+  return {
+    format,
+    text: collectSegmentText(segments, '\n'),
+    segments,
+  };
+}
+
+function detectSubtitleFormat(filename, text) {
+  const lowerName = (filename || '').toLowerCase();
+  if (lowerName.endsWith('.srt')) return 'srt';
+  if (lowerName.endsWith('.vtt')) return 'vtt';
+  if (text.startsWith('WEBVTT')) return 'vtt';
+  if (/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/.test(text)) return 'srt';
+  throw new Error('Unsupported subtitle format. Please upload an SRT or VTT file.');
+}
+
+function parseSRTSegments(text) {
+  const blocks = normalizeLineEndings(text).split(/\n{2,}/);
+  const segments = [];
+
+  for (let i = 0; i < blocks.length; i++) {
+    const lines = blocks[i].split('\n').map(trimLineEnd);
+    if (!lines.length) continue;
+
+    let timingIndex = 0;
+    if (/^\d+$/.test(lines[0].trim()) && lines.length > 1) {
+      timingIndex = 1;
+    }
+
+    const timing = parseCueTimingLine(lines[timingIndex]);
+    if (!timing) continue;
+
+    const cueText = lines.slice(timingIndex + 1).join('\n').trim();
+    if (!cueText) continue;
+
+    segments.push({
+      start: timing.start,
+      end: timing.end,
+      text: cueText,
+    });
+  }
+
+  return segments;
+}
+
+function parseVTTSegments(text) {
+  const blocks = normalizeLineEndings(text)
+    .replace(/^\uFEFF?WEBVTT[^\n]*\n*/, '')
+    .split(/\n{2,}/);
+  const segments = [];
+
+  for (let i = 0; i < blocks.length; i++) {
+    const lines = blocks[i].split('\n').map(trimLineEnd).filter(Boolean);
+    if (!lines.length) continue;
+    if (/^(NOTE|STYLE|REGION)\b/.test(lines[0])) continue;
+
+    const timingIndex = lines.findIndex(function(line) {
+      return line.includes('-->');
+    });
+
+    if (timingIndex === -1) continue;
+
+    const timing = parseCueTimingLine(lines[timingIndex]);
+    if (!timing) continue;
+
+    const cueText = lines.slice(timingIndex + 1).join('\n').trim();
+    if (!cueText) continue;
+
+    segments.push({
+      start: timing.start,
+      end: timing.end,
+      text: cueText,
+    });
+  }
+
+  return segments;
+}
+
+function parseCueTimingLine(line) {
+  const match = String(line || '').match(/^\s*([\d:.,]+)\s*-->\s*([\d:.,]+)/);
+  if (!match) return null;
+
+  const start = parseSubtitleTimestamp(match[1]);
+  const end = parseSubtitleTimestamp(match[2]);
+  if (start === null || end === null) return null;
+
+  return { start, end };
+}
+
+function parseSubtitleTimestamp(value) {
+  const normalized = getTrimmedParam(String(value || '').replace(',', '.'));
+  if (!normalized) return null;
+
+  const match = normalized.match(/^(?:(\d{1,2}):)?(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (!match) return null;
+
+  const hours = Number(match[1] || '0');
+  const minutes = Number(match[2] || '0');
+  const seconds = Number(match[3] || '0');
+  const milliseconds = Number((match[4] || '0').padEnd(3, '0'));
+
+  if ([hours, minutes, seconds, milliseconds].some(function(part) {
+    return !Number.isFinite(part);
+  })) {
+    return null;
+  }
+
+  return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+}
+
+function collectSegmentText(segments, separator) {
+  if (!Array.isArray(segments) || segments.length === 0) return '';
+
+  return segments
+    .map(function(segment) {
+      return getTrimmedParam(segment && segment.text ? String(segment.text) : '');
+    })
+    .filter(Boolean)
+    .join(separator || ' ');
+}
+
+function normalizeInlineText(value) {
+  return normalizeLineEndings(String(value || ''))
+    .split('\n')
+    .map(function(line) {
+      return line.trim();
+    })
+    .filter(Boolean)
+    .join(' / ');
+}
+
+function normalizeLineEndings(value) {
+  return String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function trimLineEnd(value) {
+  return String(value || '').replace(/\s+$/, '');
 }

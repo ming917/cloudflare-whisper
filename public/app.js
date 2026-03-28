@@ -10,9 +10,19 @@ const audioFileInput = document.getElementById('audioFile');
 const dropzone = document.getElementById('dropzone');
 const dropzoneHint = document.getElementById('dropzoneHint');
 const fileMeta = document.getElementById('fileMeta');
+const subtitleForm = document.getElementById('subtitleForm');
+const subtitleFileInput = document.getElementById('subtitleFile');
+const subtitleDropzone = document.getElementById('subtitleDropzone');
+const subtitleDropzoneHint = document.getElementById('subtitleDropzoneHint');
+const subtitleFileMeta = document.getElementById('subtitleFileMeta');
+const subtitleLanguagePresetSelect = document.getElementById('subtitleLanguagePreset');
+const subtitleLanguageInput = document.getElementById('subtitleLanguage');
+const subtitleLanguageHint = document.getElementById('subtitleLanguageHint');
 const progressContainer = document.getElementById('progressContainer');
 const progressBar = document.getElementById('progressBar');
+const progressLabel = document.getElementById('progressLabel');
 const metadataBox = document.getElementById('metadata');
+const resultDescription = document.getElementById('resultDescription');
 const presetSelect = document.getElementById('preset');
 const presetHint = document.getElementById('presetHint');
 const resetAdvancedBtn = document.getElementById('resetAdvancedBtn');
@@ -83,6 +93,8 @@ let latestRawPayload = null;
 let currentOutputContent = '';
 let isApplyingPreset = false;
 let activeCustomSelect = null;
+let currentResultFileName = 'result.txt';
+let currentResultKind = 'audio';
 
 function pad(num, size) {
   const width = size === undefined ? 2 : size;
@@ -223,6 +235,14 @@ function getAudioContentType(file) {
   return 'application/octet-stream';
 }
 
+function getSubtitleContentType(file) {
+  if (file && file.type) return file.type;
+
+  const fileName = file && file.name ? file.name.toLowerCase() : '';
+  if (fileName.endsWith('.vtt')) return 'text/vtt';
+  return 'text/plain';
+}
+
 function syncCustomSelectById(id) {
   const wrapper = customSelects.find(function(item) {
     const select = item.querySelector('select');
@@ -308,30 +328,50 @@ function updateFileMeta() {
   }
 }
 
-function wireDropzone() {
-  if (!dropzone) return;
+function updateSubtitleFileMeta() {
+  const file = subtitleFileInput.files[0];
+  if (!file) {
+    subtitleFileMeta.textContent = '尚未选择字幕文件';
+    if (subtitleDropzoneHint) {
+      subtitleDropzoneHint.textContent = '支持 `SRT` 与 `VTT`，可直接上传现成字幕文件翻译为中文。';
+    }
+    return;
+  }
+
+  const sizeInKb = Math.max(1, Math.round(file.size / 1024));
+  const typeLabel = file.type ? file.type : '未知类型';
+  subtitleFileMeta.textContent = file.name + ' | ' + typeLabel + ' | ' + sizeInKb + ' KB';
+  if (subtitleDropzoneHint) {
+    subtitleDropzoneHint.textContent = '已选择字幕文件；如需替换，可重新点击选择，或直接拖拽另一个字幕文件覆盖。';
+  }
+}
+
+function wireDropzone(dropzoneElement, fileInput, updateMeta, activeClassName) {
+  if (!dropzoneElement || !fileInput || !updateMeta) return;
+
+  const dragClassName = activeClassName || 'is-dragover';
 
   ['dragenter', 'dragover'].forEach(function(eventName) {
-    dropzone.addEventListener(eventName, function(event) {
+    dropzoneElement.addEventListener(eventName, function(event) {
       event.preventDefault();
-      dropzone.classList.add('is-dragover');
+      dropzoneElement.classList.add(dragClassName);
     });
   });
 
   ['dragleave', 'dragend', 'drop'].forEach(function(eventName) {
-    dropzone.addEventListener(eventName, function(event) {
+    dropzoneElement.addEventListener(eventName, function(event) {
       event.preventDefault();
-      if (eventName !== 'drop' && dropzone.contains(event.relatedTarget)) return;
-      dropzone.classList.remove('is-dragover');
+      if (eventName !== 'drop' && dropzoneElement.contains(event.relatedTarget)) return;
+      dropzoneElement.classList.remove(dragClassName);
     });
   });
 
-  dropzone.addEventListener('drop', function(event) {
+  dropzoneElement.addEventListener('drop', function(event) {
     const files = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files : null;
     if (!files || !files.length) return;
 
-    audioFileInput.files = files;
-    updateFileMeta();
+    fileInput.files = files;
+    updateMeta();
   });
 }
 
@@ -401,6 +441,41 @@ function syncLanguagePresetFromInput() {
   syncLanguageControls();
 }
 
+function getNormalizedSubtitleLanguage() {
+  const presetValue = subtitleLanguagePresetSelect.value;
+  const manualValue = subtitleLanguageInput.value.trim();
+  if (presetValue === 'custom') return manualValue;
+  return manualValue || presetValue;
+}
+
+function syncSubtitleLanguageControls() {
+  const manualValue = subtitleLanguageInput.value.trim();
+  const presetValue = subtitleLanguagePresetSelect.value;
+
+  if (presetValue === 'custom') {
+    subtitleLanguageInput.placeholder = '输入字幕原语言代码，例如 it / pt / ar';
+    subtitleLanguageHint.textContent = '字幕翻译不会自动识别语种，请填写原字幕语言代码。';
+    return;
+  }
+
+  if (!manualValue || manualValue === presetValue) subtitleLanguageInput.value = presetValue;
+  subtitleLanguageInput.placeholder = '已选择常用语言，也可改成其它代码';
+  subtitleLanguageHint.textContent = '字幕翻译不会自动识别语种，请明确填写原字幕语言代码。';
+}
+
+function syncSubtitleLanguagePresetFromInput() {
+  const manualValue = subtitleLanguageInput.value.trim().toLowerCase();
+  const knownOptions = ['en', 'ja', 'ko', 'fr', 'de', 'es', 'ru'];
+  if (!manualValue) {
+    subtitleLanguagePresetSelect.value = 'en';
+  } else if (knownOptions.indexOf(manualValue) !== -1) {
+    subtitleLanguagePresetSelect.value = manualValue;
+  } else {
+    subtitleLanguagePresetSelect.value = 'custom';
+  }
+  syncSubtitleLanguageControls();
+}
+
 function formatSeconds(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) return null;
   return Math.round(value * 10) / 10 + 's';
@@ -424,9 +499,49 @@ function renderMetadata(responseData) {
   if (durationAfterVad) items.push('VAD 后 ' + durationAfterVad);
   if (info.translation_applied) items.push('已翻译为中文');
   if (info.translation_skipped) items.push('原文已是中文');
+  if (info.subtitle_format) items.push('字幕格式 ' + String(info.subtitle_format).toUpperCase());
+  if (typeof info.segment_count === 'number') items.push('字幕段数 ' + info.segment_count);
   if (typeof responseData.word_count === 'number') items.push('词数 ' + responseData.word_count);
 
   metadataBox.textContent = items.join(' | ');
+}
+
+function setProgressMessage(message) {
+  if (progressLabel) progressLabel.textContent = message;
+}
+
+function setResultDescription(message) {
+  if (resultDescription) resultDescription.textContent = message;
+}
+
+function startProgress(message) {
+  setProgressMessage(message);
+  progressContainer.classList.remove('hidden');
+  resetResultState();
+
+  let progress = 0;
+  const progressInterval = setInterval(function() {
+    if (progress < 90) {
+      progress += 0.9;
+      progressBar.style.width = progress + '%';
+    }
+  }, 200);
+
+  return progressInterval;
+}
+
+function stopProgress(progressInterval, hideWithDelay) {
+  clearInterval(progressInterval);
+  progressBar.style.width = '100%';
+
+  if (hideWithDelay) {
+    setTimeout(function() {
+      progressContainer.classList.add('hidden');
+    }, 500);
+    return;
+  }
+
+  progressContainer.classList.add('hidden');
 }
 
 function formatJson(value) {
@@ -494,10 +609,13 @@ function resetResultState() {
 
 attachAdvancedFieldListeners();
 setupCustomSelects();
-wireDropzone();
+wireDropzone(dropzone, audioFileInput, updateFileMeta, 'is-dragover');
+wireDropzone(subtitleDropzone, subtitleFileInput, updateSubtitleFileMeta, 'is-dragover-subtle');
 applyPreset('balanced');
 syncModeControls();
+syncSubtitleLanguageControls();
 updateFileMeta();
+updateSubtitleFileMeta();
 
 presetSelect.addEventListener('change', function() {
   if (presetSelect.value === 'custom') return updatePresetHint();
@@ -512,6 +630,9 @@ modeSelect.addEventListener('change', syncModeControls);
 languagePresetSelect.addEventListener('change', syncLanguageControls);
 languageInput.addEventListener('input', syncLanguagePresetFromInput);
 audioFileInput.addEventListener('change', updateFileMeta);
+subtitleLanguagePresetSelect.addEventListener('change', syncSubtitleLanguageControls);
+subtitleLanguageInput.addEventListener('input', syncSubtitleLanguagePresetFromInput);
+subtitleFileInput.addEventListener('change', updateSubtitleFileMeta);
 
 outputFormatSelect.addEventListener('change', function() {
   if (latestResponseData) renderOutput(latestResponseData);
@@ -526,8 +647,9 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
     return;
   }
 
-  progressContainer.classList.remove('hidden');
-  resetResultState();
+  currentResultKind = 'audio';
+  currentResultFileName = file.name;
+  setResultDescription('支持在 SRT、VTT、TXT 和 Raw JSON 之间切换；外语转中文模式会直接展示翻译后的中文结果。');
 
   const params = new URLSearchParams({ mode: getSelectedMode() });
   const normalizedLanguage = getNormalizedLanguage();
@@ -542,13 +664,7 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
   appendNumericParam(params, 'log_prob_threshold', document.getElementById('log_prob_threshold').value);
   appendNumericParam(params, 'hallucination_silence_threshold', document.getElementById('hallucination_silence_threshold').value);
 
-  let progress = 0;
-  const progressInterval = setInterval(function() {
-    if (progress < 90) {
-      progress += 0.9;
-      progressBar.style.width = progress + '%';
-    }
-  }, 200);
+  const progressInterval = startProgress('正在提交音频并等待 Whisper 返回结果，请稍候。');
 
   try {
     const contentType = getAudioContentType(file);
@@ -570,11 +686,7 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
     latestResponseData = rawData && rawData.response ? rawData.response : null;
     renderMetadata(latestResponseData || {});
 
-    clearInterval(progressInterval);
-    progressBar.style.width = '100%';
-    setTimeout(function() {
-      progressContainer.classList.add('hidden');
-    }, 500);
+    stopProgress(progressInterval, true);
 
     renderOutput(latestResponseData);
   } catch (error) {
@@ -584,11 +696,63 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
   }
 });
 
+subtitleForm.addEventListener('submit', async function(event) {
+  event.preventDefault();
+
+  const file = subtitleFileInput.files[0];
+  if (!file) {
+    alert('Please select a subtitle file.');
+    return;
+  }
+
+  const normalizedLanguage = getNormalizedSubtitleLanguage();
+  if (!normalizedLanguage) {
+    alert('Please provide the subtitle source language.');
+    return;
+  }
+
+  currentResultKind = 'subtitle';
+  currentResultFileName = file.name;
+  setResultDescription('这里展示的是上传字幕文件翻译后的结果；建议优先下载 SRT 或 VTT，便于继续剪辑或挂载字幕。');
+
+  const params = new URLSearchParams({
+    language: normalizedLanguage,
+    filename: file.name,
+  });
+  const progressInterval = startProgress('正在上传字幕文件并分批翻译为中文，请稍候。');
+
+  try {
+    const response = await fetch('/subtitle?' + params.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': getSubtitleContentType(file) },
+      body: file,
+    });
+
+    if (!response.ok) {
+      clearInterval(progressInterval);
+      progressContainer.classList.add('hidden');
+      resultBox.value = 'Error: ' + await response.text();
+      return;
+    }
+
+    const rawData = await response.json();
+    latestRawPayload = rawData;
+    latestResponseData = rawData && rawData.response ? rawData.response : null;
+    renderMetadata(latestResponseData || {});
+    stopProgress(progressInterval, true);
+    renderOutput(latestResponseData);
+  } catch (error) {
+    clearInterval(progressInterval);
+    progressContainer.classList.add('hidden');
+    resultBox.value = 'Error: ' + error.message;
+  }
+});
+
 downloadBtn.addEventListener('click', function() {
-  if (!audioFileInput.files[0] || !latestResponseData) return;
+  if (!latestResponseData) return;
 
   const descriptor = getOutputDescriptor(latestResponseData);
-  const outputFileName = audioFileInput.files[0].name.replace(/\.[^/.]+$/, '') + descriptor.extension;
+  const outputFileName = currentResultFileName.replace(/\.[^/.]+$/, '') + descriptor.extension;
   const blob = new Blob([descriptor.content], { type: descriptor.mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');

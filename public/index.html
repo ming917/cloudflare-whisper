@@ -9,7 +9,7 @@
 </head>
 <body class="page-bg text-slate-900 antialiased">
   <main class="mx-auto min-h-screen max-w-4xl px-4 py-4 sm:px-5 lg:px-6 lg:py-5">
-    <form id="uploadForm" class="glass-panel p-4 sm:p-5 lg:p-6">
+     <form id="uploadForm" class="glass-panel p-4 sm:p-5 lg:p-6">
         <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 class="text-xl font-black tracking-tight text-slate-900 sm:text-2xl">音频转写</h1>
@@ -189,11 +189,63 @@
         </div>
       </form>
 
+      <form id="subtitleForm" class="glass-panel form-panel-accent mt-4 p-4 sm:p-5 lg:p-6">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 class="text-xl font-black tracking-tight text-slate-900 sm:text-2xl">字幕文件翻译</h2>
+            <p class="mt-1 text-[13px] leading-6 text-slate-600">适合先保留原语字幕，再单独翻译成中文，能避开长音频二次处理时的子请求压力。</p>
+          </div>
+        </div>
+
+        <div class="mt-5 grid gap-4 lg:grid-cols-2">
+          <div class="field-block lg:col-span-2">
+            <label for="subtitleFile" class="field-label">字幕文件</label>
+            <div class="field-shell dropzone" id="subtitleDropzone">
+              <input type="file" id="subtitleFile" accept=".srt,.vtt,text/vtt,text/plain" class="file-input">
+            </div>
+            <p class="field-hint" id="subtitleDropzoneHint">支持 `SRT` 与 `VTT`，可直接上传现成字幕文件翻译为中文。</p>
+            <p class="file-pill" id="subtitleFileMeta">尚未选择字幕文件</p>
+          </div>
+
+          <div class="field-block lg:col-span-2">
+            <label for="subtitleLanguagePreset" class="field-label">原字幕语言</label>
+            <div class="grid gap-3 md:grid-cols-[minmax(190px,220px)_minmax(0,1fr)]">
+              <div class="custom-select" data-select-id="subtitleLanguagePreset">
+                <select id="subtitleLanguagePreset" class="sr-only field-native-select">
+                  <option value="en">英语 en</option>
+                  <option value="ja">日语 ja</option>
+                  <option value="ko">韩语 ko</option>
+                  <option value="fr">法语 fr</option>
+                  <option value="de">德语 de</option>
+                  <option value="es">西语 es</option>
+                  <option value="ru">俄语 ru</option>
+                  <option value="custom">自定义代码</option>
+                </select>
+                <button type="button" class="custom-select-trigger">
+                  <span class="custom-select-label"></span>
+                  <span class="custom-select-icon"></span>
+                </button>
+                <div class="custom-select-menu hidden"></div>
+              </div>
+              <div class="field-shell">
+                <input type="text" id="subtitleLanguage" class="field-control" placeholder="请输入字幕原语言代码，例如 en / ja / ko">
+              </div>
+            </div>
+            <p class="field-hint" id="subtitleLanguageHint">字幕翻译不会自动识别语种，请明确填写原字幕语言代码。</p>
+          </div>
+        </div>
+
+        <div class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p class="max-w-2xl text-[13px] leading-6 text-slate-600">推荐流程：先用“外语语音保留原文”导出 `SRT` / `VTT`，再在这里单独翻成中文。</p>
+          <button type="submit" class="primary-button">开始翻译字幕</button>
+        </div>
+      </form>
+
     <div id="progressContainer" class="glass-panel mt-4 hidden p-4 sm:p-5">
       <div class="flex items-center justify-between gap-3">
         <div>
           <h2 class="text-base font-bold text-slate-900">正在处理</h2>
-          <p class="mt-1 text-sm text-slate-500">正在提交音频并等待 Whisper 返回结果，请稍候。</p>
+          <p class="mt-1 text-sm text-slate-500" id="progressLabel">正在提交内容并等待处理结果，请稍候。</p>
         </div>
         <div class="status-chip">处理中</div>
       </div>
@@ -206,7 +258,7 @@
       <div class="flex flex-col gap-3 border-b border-white/60 pb-4 lg:flex-row lg:items-start lg:justify-between">
         <div class="max-w-2xl">
           <h2 class="text-lg font-bold text-slate-900">结果预览</h2>
-          <p class="mt-1.5 text-[13px] leading-6 text-slate-600">支持在 `SRT`、`VTT`、`TXT` 和 `Raw JSON` 之间切换；外语转中文模式会直接展示翻译后的中文结果。</p>
+          <p class="mt-1.5 text-[13px] leading-6 text-slate-600" id="resultDescription">支持在 `SRT`、`VTT`、`TXT` 和 `Raw JSON` 之间切换；外语转中文模式会直接展示翻译后的中文结果。</p>
           <p id="metadata" class="mt-2 text-[13px] leading-6 text-teal-700"></p>
         </div>
 

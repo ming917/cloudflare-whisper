@@ -80,6 +80,12 @@ body.page-bg {
   box-shadow: 0 0 0 3px rgba(191, 90, 43, 0.08);
 }
 
+.dropzone.is-dragover-subtle {
+  border-color: rgba(35, 111, 115, 0.48);
+  background: rgba(238, 248, 248, 0.96);
+  box-shadow: 0 0 0 3px rgba(35, 111, 115, 0.08);
+}
+
 .field-shell:focus-within {
   border-color: rgba(191, 90, 43, 0.5);
   box-shadow: 0 0 0 3px rgba(191, 90, 43, 0.08);
@@ -334,6 +340,22 @@ body.page-bg {
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid rgba(86, 64, 49, 0.1);
   font: 0.8rem/1.55 "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+}
+
+.form-panel-accent {
+  position: relative;
+  overflow: hidden;
+}
+
+.form-panel-accent::after {
+  content: "";
+  position: absolute;
+  inset: auto -10% -40% auto;
+  width: 16rem;
+  height: 16rem;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(35, 111, 115, 0.1) 0%, rgba(35, 111, 115, 0) 68%);
+  pointer-events: none;
 }
 
 @media (max-width: 768px) {

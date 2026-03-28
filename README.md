@@ -11,6 +11,7 @@
 - 支持中文语音转中文
 - 支持外语语音保留原文转写
 - 支持外语语音转中文
+- 支持上传 `SRT` / `VTT` 字幕文件后单独翻译为中文
 - 支持语言指定、提示词、前缀、VAD、束搜索等高级参数
 
 ## 工作模式
@@ -30,14 +31,15 @@
 
 ## API 接口
 
-Worker 只处理以下四个接口：
+Worker 处理以下五个接口：
 
 - `POST /raw`：返回结构化 JSON 数据
 - `POST /srt`：返回 SRT 字幕内容
 - `POST /vtt`：返回 VTT 字幕内容
 - `POST /txt`：返回纯文本内容
+- `POST /subtitle`：上传现有字幕文件并返回翻译后的结构化 JSON 数据
 
-### 请求方式
+### 音频接口请求方式
 
 - 方法：`POST`
 - 请求体：音频文件二进制内容
@@ -65,6 +67,17 @@ Worker 只处理以下四个接口：
 | `compression_ratio_threshold` | number | 压缩比过滤阈值 |
 | `log_prob_threshold` | number | 低置信度过滤阈值 |
 | `hallucination_silence_threshold` | number | 静音抗幻觉阈值 |
+
+### 字幕翻译接口
+
+- 路径：`POST /subtitle`
+- 请求体：`SRT` 或 `VTT` 字幕文件文本内容
+- 查询参数：
+
+| 参数名 | 类型 | 说明 |
+| --- | --- | --- |
+| `language` | string | 必填，字幕原语言代码，例如 `en`、`ja`、`ko` |
+| `filename` | string | 可选，帮助服务端判断字幕格式 |
 
 ## 输出说明
 
@@ -119,12 +132,15 @@ Worker 只处理以下四个接口：
 
 Cloudflare Worker 和 Workers AI 都存在平台资源限制。较长音频、较大文件、较高码率音频，或者“外语语音转中文”这类两阶段处理流程，都更容易触发限制。
 
+当前实现已将外语转中文里的字幕段翻译改成分批请求，避免每个 segment 单独触发一次 `env.AI.run()`；这能显著减少子请求数量，但超长音频仍可能接近平台上限。
+
 建议：
 
 - 优先上传较短、较小、编码标准的音频文件
 - 优先使用 `MP3` 或 `WAV`
 - 如遇解码失败，先转换格式再上传
 - 如遇资源限制错误，尝试缩短音频时长或降低文件体积
+- 若音频较长，先使用“外语语音保留原文”导出 `SRT` / `VTT`，再通过 `/subtitle` 或页面里的“字幕文件翻译”单独翻译
 
 ## 项目结构
 
@@ -157,7 +173,7 @@ binding = "AI"
 [assets]
 directory = "./public"
 binding = "ASSETS"
-run_worker_first = ["/raw", "/srt", "/vtt", "/txt"]
+run_worker_first = ["/raw", "/srt", "/vtt", "/txt", "/subtitle"]
 ```
 
 ### 3. 本地开发
