@@ -1,4 +1,4 @@
-name = "whisper-cloudflare"
+name = "cloudflare-whisper"
 main = "index.js"
 compatibility_date = "2026-03-26"
 
