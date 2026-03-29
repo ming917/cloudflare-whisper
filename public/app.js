@@ -383,6 +383,18 @@ function getNormalizedLanguage() {
   return manualValue;
 }
 
+function handleLanguagePresetChange() {
+  const presetValue = languagePresetSelect.value;
+
+  if (presetValue === 'auto') {
+    languageInput.value = '';
+  } else if (presetValue !== 'custom') {
+    languageInput.value = presetValue;
+  }
+
+  syncLanguageControls();
+}
+
 function syncModeControls() {
   const mode = getSelectedMode();
 
@@ -410,10 +422,10 @@ function syncModeControls() {
   }
 
   syncLanguageControls();
+  syncCustomSelectById('mode');
 }
 
 function syncLanguageControls() {
-  const manualValue = languageInput.value.trim();
   const presetValue = languagePresetSelect.value;
 
   if (presetValue === 'custom') {
@@ -424,7 +436,6 @@ function syncLanguageControls() {
     languageInput.placeholder = '留空自动检测，或输入自定义语言代码';
     return;
   }
-  if (!manualValue || manualValue === presetValue) languageInput.value = presetValue;
   languageInput.placeholder = '已选择常用语言，也可改成其它代码';
 }
 
@@ -439,6 +450,7 @@ function syncLanguagePresetFromInput() {
     languagePresetSelect.value = 'custom';
   }
   syncLanguageControls();
+  syncCustomSelectById('languagePreset');
 }
 
 function getNormalizedSubtitleLanguage() {
@@ -448,19 +460,29 @@ function getNormalizedSubtitleLanguage() {
   return manualValue || presetValue;
 }
 
+function handleSubtitleLanguagePresetChange() {
+  const presetValue = subtitleLanguagePresetSelect.value;
+
+  if (presetValue !== 'custom') {
+    subtitleLanguageInput.value = presetValue;
+  }
+
+  syncSubtitleLanguageControls();
+}
+
 function syncSubtitleLanguageControls() {
-  const manualValue = subtitleLanguageInput.value.trim();
   const presetValue = subtitleLanguagePresetSelect.value;
 
   if (presetValue === 'custom') {
     subtitleLanguageInput.placeholder = '输入字幕原语言代码，例如 it / pt / ar';
     subtitleLanguageHint.textContent = '字幕翻译不会自动识别语种，请填写原字幕语言代码。';
+    syncCustomSelectById('subtitleLanguagePreset');
     return;
   }
 
-  if (!manualValue || manualValue === presetValue) subtitleLanguageInput.value = presetValue;
   subtitleLanguageInput.placeholder = '已选择常用语言，也可改成其它代码';
   subtitleLanguageHint.textContent = '字幕翻译不会自动识别语种，请明确填写原字幕语言代码。';
+  syncCustomSelectById('subtitleLanguagePreset');
 }
 
 function syncSubtitleLanguagePresetFromInput() {
@@ -627,10 +649,10 @@ resetAdvancedBtn.addEventListener('click', function() {
 });
 
 modeSelect.addEventListener('change', syncModeControls);
-languagePresetSelect.addEventListener('change', syncLanguageControls);
+languagePresetSelect.addEventListener('change', handleLanguagePresetChange);
 languageInput.addEventListener('input', syncLanguagePresetFromInput);
 audioFileInput.addEventListener('change', updateFileMeta);
-subtitleLanguagePresetSelect.addEventListener('change', syncSubtitleLanguageControls);
+subtitleLanguagePresetSelect.addEventListener('change', handleSubtitleLanguagePresetChange);
 subtitleLanguageInput.addEventListener('input', syncSubtitleLanguagePresetFromInput);
 subtitleFileInput.addEventListener('change', updateSubtitleFileMeta);
 

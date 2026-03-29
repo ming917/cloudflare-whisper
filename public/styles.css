@@ -118,6 +118,10 @@ body.page-bg {
   position: relative;
 }
 
+.custom-select.is-open {
+  z-index: 80;
+}
+
 .custom-select.is-open .custom-select-trigger {
   border-color: rgba(191, 90, 43, 0.5);
   box-shadow: 0 0 0 3px rgba(191, 90, 43, 0.08);
@@ -344,7 +348,8 @@ body.page-bg {
 
 .form-panel-accent {
   position: relative;
-  overflow: hidden;
+  isolation: isolate;
+  overflow: visible;
 }
 
 .form-panel-accent::after {
@@ -356,6 +361,11 @@ body.page-bg {
   border-radius: 999px;
   background: radial-gradient(circle, rgba(35, 111, 115, 0.1) 0%, rgba(35, 111, 115, 0) 68%);
   pointer-events: none;
+  z-index: -1;
+}
+
+#subtitleForm {
+  overflow: visible;
 }
 
 @media (max-width: 768px) {

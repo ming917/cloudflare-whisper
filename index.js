@@ -236,7 +236,10 @@ async function buildProcessedResponse(whisperResponse, requestConfig, env) {
 }
 
 async function translateWhisperResponseToChinese(whisperResponse, sourceLanguage, env) {
-  const translatedSegments = await translateSegments(whisperResponse.segments || [], sourceLanguage, 'zh', env);
+  const translatedSegments = await translateSegments(whisperResponse.segments || [], sourceLanguage, 'zh', env, {
+    maxItems: 24,
+    maxCharacters: 2600,
+  });
   const translatedText = translatedSegments.length
     ? collectSegmentText(translatedSegments, ' ')
     : await translateText(whisperResponse.text || '', sourceLanguage, 'zh', env);
@@ -260,7 +263,10 @@ async function translateWhisperResponseToChinese(whisperResponse, sourceLanguage
 }
 
 async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLanguage, env) {
-  const translatedSegments = await translateSegments(subtitleDocument.segments, sourceLanguage, 'zh', env);
+  const translatedSegments = await translateSegments(subtitleDocument.segments, sourceLanguage, 'zh', env, {
+    maxItems: 240,
+    maxCharacters: 28000,
+  });
   const translatedText = collectSegmentText(translatedSegments, '\n');
   const translatedResponse = addTranslationMetadata(
     {
@@ -295,12 +301,17 @@ async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLangua
   };
 }
 
-async function translateSegments(segments, sourceLanguage, targetLanguage, env) {
+async function translateSegments(segments, sourceLanguage, targetLanguage, env, options) {
   if (!Array.isArray(segments) || segments.length === 0) {
     return [];
   }
 
-  const batches = createTranslationBatches(segments, 12, 1600);
+  const batchOptions = {
+    maxItems: 12,
+    maxCharacters: 1600,
+    ...(options || {}),
+  };
+  const batches = createTranslationBatches(segments, batchOptions.maxItems, batchOptions.maxCharacters);
   const translated = [];
 
   for (let i = 0; i < batches.length; i++) {
@@ -324,17 +335,23 @@ async function translateSegmentBatch(segments, sourceLanguage, targetLanguage, e
     ];
   }
 
-  const taggedPayload = buildTaggedTranslationPayload(segments);
-  const translatedPayload = await translateText(taggedPayload, sourceLanguage, targetLanguage, env);
-  const extractedTexts = extractTaggedTranslations(translatedPayload, segments.length);
+  try {
+    const taggedPayload = buildTaggedTranslationPayload(segments);
+    const translatedPayload = await translateText(taggedPayload, sourceLanguage, targetLanguage, env);
+    const extractedTexts = extractTaggedTranslations(translatedPayload, segments.length);
 
-  if (extractedTexts) {
-    return segments.map(function(segment, index) {
-      return {
-        ...segment,
-        text: extractedTexts[index] || segment.text,
-      };
-    });
+    if (extractedTexts) {
+      return segments.map(function(segment, index) {
+        return {
+          ...segment,
+          text: extractedTexts[index] || segment.text,
+        };
+      });
+    }
+  } catch (error) {
+    if (segments.length === 1) {
+      throw error;
+    }
   }
 
   const midpoint = Math.ceil(segments.length / 2);
@@ -527,7 +544,7 @@ function getPublicErrorMessage(error) {
   }
 
   if (message.includes('Too many subrequests')) {
-    return 'This request triggered too many Worker subrequests. The audio path now batches translation more aggressively, but for very long files you should still shorten the upload or translate an exported subtitle file separately.';
+    return 'This request triggered too many Worker subrequests. Translation is already batched, but this file is still too large for a single Worker invocation. Try splitting the audio or subtitle file into smaller parts and process them separately.';
   }
 
   if (message) {
