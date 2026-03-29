@@ -280,6 +280,99 @@ function parseSubtitleDocumentClient(text, fileName) {
   };
 }
 
+function buildSubtitleBatchResult(parsedDocument, translatedTexts, sourceLanguage) {
+  if (!Array.isArray(translatedTexts) || translatedTexts.length !== parsedDocument.segments.length) {
+    throw new Error('Subtitle batch result did not match the original subtitle segment count.');
+  }
+
+  const translatedSegments = parsedDocument.segments.map(function(segment, index) {
+    return {
+      start: segment.start,
+      end: segment.end,
+      text: translatedTexts[index] || segment.text,
+    };
+  });
+
+  const translatedText = translatedSegments.map(function(segment) {
+    return segment.text;
+  }).join('\n');
+
+  return {
+    mode: 'subtitle_to_zh',
+    response: {
+      text: translatedText,
+      segments: translatedSegments,
+      vtt: convertSegmentsToVTT(translatedSegments),
+      subtitle_format: parsedDocument.format,
+      transcription_info: {
+        subtitle_format: parsedDocument.format,
+        segment_count: translatedSegments.length,
+        translation_source_language: sourceLanguage,
+        translation_target_language: 'zh',
+        translation_applied: true,
+        translation_skipped: false,
+      },
+      translation_info: {
+        enabled: true,
+        skipped: false,
+        source_language: sourceLanguage,
+        target_language: 'zh',
+        translated_text: translatedText,
+        segment_count: translatedSegments.length,
+      },
+    },
+    original_response: {
+      text: parsedDocument.text,
+      segments: parsedDocument.segments,
+      vtt: convertSegmentsToVTT(parsedDocument.segments),
+      subtitle_format: parsedDocument.format,
+    },
+    translation: {
+      enabled: true,
+      skipped: false,
+      source_language: sourceLanguage,
+      target_language: 'zh',
+      translated_text: translatedText,
+      segment_count: translatedSegments.length,
+    },
+  };
+}
+
+async function pollSubtitleBatchStatus(requestId, expectedCount) {
+  const maxAttempts = 60;
+  const delayMs = 1000;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await fetch('/subtitle/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request_id: requestId,
+        expected_count: expectedCount,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const payload = await response.json();
+    if (payload.status === 'completed' && Array.isArray(payload.translated_texts)) {
+      return payload;
+    }
+
+    await wait(delayMs);
+  }
+
+  throw new Error('Subtitle batch translation timed out while waiting for Workers AI batch completion.');
+}
+
+function wait(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
 function setFieldValue(id, value) {
   const field = document.getElementById(id);
   if (!field) return;
@@ -871,11 +964,13 @@ subtitleForm.addEventListener('submit', async function(event) {
 
   currentResultKind = 'subtitle';
   currentResultFileName = file.name;
-  setResultDescription('这里展示的是上传字幕文件翻译后的结果；系统会走官方数组批量翻译并轮询结果，再把中文回填到原时间轴。');
+  setResultDescription('这里展示的是上传字幕文件翻译后的结果；系统会先提交官方数组批量翻译任务，再由前端轮询结果并回填到原时间轴。');
 
   const progressInterval = startProgress('正在上传字幕文件、提交批量翻译任务并等待结果，请稍候。');
 
   try {
+    const subtitleText = await file.text();
+    const parsedDocument = parseSubtitleDocumentClient(subtitleText, file.name);
     const params = new URLSearchParams({
       language: normalizedLanguage,
       filename: file.name,
@@ -883,7 +978,7 @@ subtitleForm.addEventListener('submit', async function(event) {
     const response = await fetch('/subtitle?' + params.toString(), {
       method: 'POST',
       headers: { 'Content-Type': getSubtitleContentType(file) },
-      body: file,
+      body: subtitleText,
     });
 
     if (!response.ok) {
@@ -893,7 +988,10 @@ subtitleForm.addEventListener('submit', async function(event) {
       return;
     }
 
-    const rawData = await response.json();
+    const queuedData = await response.json();
+    setProgressMessage('批量翻译任务已提交，正在轮询 Workers AI 结果，请稍候。');
+    const completedData = await pollSubtitleBatchStatus(queuedData.request_id, parsedDocument.segments.length);
+    const rawData = buildSubtitleBatchResult(parsedDocument, completedData.translated_texts, normalizedLanguage);
     latestRawPayload = rawData;
     latestResponseData = rawData && rawData.response ? rawData.response : null;
     renderMetadata(latestResponseData || {});
