@@ -871,9 +871,9 @@ subtitleForm.addEventListener('submit', async function(event) {
 
   currentResultKind = 'subtitle';
   currentResultFileName = file.name;
-  setResultDescription('这里展示的是上传字幕文件翻译后的结果；系统会按字幕段逐条提交给官方批量翻译接口，并把中文回填到原时间轴。');
+  setResultDescription('这里展示的是上传字幕文件翻译后的结果；系统会走官方数组批量翻译并轮询结果，再把中文回填到原时间轴。');
 
-  const progressInterval = startProgress('正在上传字幕文件并整份翻译为中文，请稍候。');
+  const progressInterval = startProgress('正在上传字幕文件、提交批量翻译任务并等待结果，请稍候。');
 
   try {
     const params = new URLSearchParams({

@@ -263,7 +263,7 @@ async function translateWhisperResponseToChinese(whisperResponse, sourceLanguage
 }
 
 async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLanguage, env) {
-  const translatedSegments = await translateSubtitleSegmentsBatch(subtitleDocument.segments, sourceLanguage, 'zh', env);
+  const translatedSegments = await translateSubtitleSegmentsWithBatchApi(subtitleDocument.segments, sourceLanguage, 'zh', env);
   const translatedText = collectSegmentText(translatedSegments, '\n');
   const translatedResponse = addTranslationMetadata(
     {
@@ -298,7 +298,7 @@ async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLangua
   };
 }
 
-async function translateSubtitleSegmentsBatch(segments, sourceLanguage, targetLanguage, env) {
+async function translateSubtitleSegmentsWithBatchApi(segments, sourceLanguage, targetLanguage, env) {
   if (!Array.isArray(segments) || segments.length === 0) {
     return [];
   }
@@ -311,19 +311,22 @@ async function translateSubtitleSegmentsBatch(segments, sourceLanguage, targetLa
     };
   });
 
-  const response = await env.AI.run('@cf/meta/m2m100-1.2b', { requests });
-  const translatedItems = Array.isArray(response) ? response : response && Array.isArray(response.result) ? response.result : null;
+  assertBatchPayloadSize(requests);
 
-  if (!translatedItems || translatedItems.length !== segments.length) {
-    throw new Error('Subtitle batch translation did not return the expected number of items.');
+  const queued = await env.AI.run('@cf/meta/m2m100-1.2b', { requests }, { queueRequest: true });
+  const requestId = queued && queued.request_id;
+
+  if (!requestId) {
+    throw new Error('Subtitle batch translation could not be queued.');
   }
 
+  const completed = await pollBatchTranslationResult('@cf/meta/m2m100-1.2b', requestId, env);
+  const translatedTexts = extractBatchTranslatedTexts(completed && completed.responses, segments.length);
+
   return segments.map(function(segment, index) {
-    const item = translatedItems[index] || {};
-    const translatedText = getTrimmedParam(item.translated_text) || segment.text;
     return {
       ...segment,
-      text: translatedText,
+      text: translatedTexts[index] || segment.text,
     };
   });
 }
@@ -385,6 +388,74 @@ async function translateSegmentBatch(segments, sourceLanguage, targetLanguage, e
   const left = await translateSegmentBatch(segments.slice(0, midpoint), sourceLanguage, targetLanguage, env);
   const right = await translateSegmentBatch(segments.slice(midpoint), sourceLanguage, targetLanguage, env);
   return left.concat(right);
+}
+
+async function pollBatchTranslationResult(model, requestId, env) {
+  const maxAttempts = 60;
+  const delayMs = 1000;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const status = await env.AI.run(model, { request_id: requestId });
+    if (status && Array.isArray(status.responses)) {
+      return status;
+    }
+
+    if (status && status.status && status.status !== 'queued' && status.status !== 'running') {
+      throw new Error('Subtitle batch translation failed with status: ' + status.status);
+    }
+
+    await sleep(delayMs);
+  }
+
+  throw new Error('Subtitle batch translation timed out while waiting for Workers AI batch completion.');
+}
+
+function extractBatchTranslatedTexts(responses, expectedCount) {
+  if (!Array.isArray(responses) || responses.length !== expectedCount) {
+    throw new Error('Subtitle batch translation did not return the expected number of items.');
+  }
+
+  const ordered = new Array(expectedCount);
+
+  for (let i = 0; i < responses.length; i++) {
+    const response = responses[i] || {};
+    const index = Number(response.id);
+    const result = response.result || {};
+    const translatedText = getTrimmedParam(result.translated_text || result.response || '');
+
+    if (!Number.isInteger(index) || index < 0 || index >= expectedCount) {
+      throw new Error('Subtitle batch translation returned an invalid response index.');
+    }
+
+    if (!response.success || !translatedText) {
+      throw new Error('Subtitle batch translation returned an empty or failed item.');
+    }
+
+    ordered[index] = translatedText;
+  }
+
+  if (ordered.some(function(item) {
+    return typeof item !== 'string';
+  })) {
+    throw new Error('Subtitle batch translation could not map all translated items back to subtitle segments.');
+  }
+
+  return ordered;
+}
+
+function assertBatchPayloadSize(requests) {
+  const payloadSize = new TextEncoder().encode(JSON.stringify({ requests: requests })).length;
+  const maxBytes = 10 * 1024 * 1024;
+
+  if (payloadSize > maxBytes) {
+    throw new Error('Subtitle batch payload exceeds the official Workers AI Batch API 10 MB limit. Please split the subtitle file manually and retry.');
+  }
+}
+
+function sleep(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 function createTranslationBatches(segments, maxItems, maxCharacters) {
