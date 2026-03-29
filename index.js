@@ -263,7 +263,7 @@ async function translateWhisperResponseToChinese(whisperResponse, sourceLanguage
 }
 
 async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLanguage, env) {
-  const translatedSegments = await translateIndexedSubtitleSegments(subtitleDocument.segments, sourceLanguage, 'zh', env);
+  const translatedSegments = await translateSubtitleSegmentsBatch(subtitleDocument.segments, sourceLanguage, 'zh', env);
   const translatedText = collectSegmentText(translatedSegments, '\n');
   const translatedResponse = addTranslationMetadata(
     {
@@ -298,25 +298,32 @@ async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLangua
   };
 }
 
-async function translateIndexedSubtitleSegments(segments, sourceLanguage, targetLanguage, env) {
+async function translateSubtitleSegmentsBatch(segments, sourceLanguage, targetLanguage, env) {
   if (!Array.isArray(segments) || segments.length === 0) {
     return [];
   }
 
-  const indexedPayload = buildIndexedSubtitleTranslationPayload(segments);
-  const translatedPayload = await translateText(indexedPayload, sourceLanguage, targetLanguage, env);
-  const extractedTexts = extractIndexedSubtitleTranslations(translatedPayload, segments.length);
+  const requests = segments.map(function(segment) {
+    return {
+      text: normalizeInlineText(segment && segment.text ? segment.text : ''),
+      source_lang: mapTranslationModelLanguage(sourceLanguage),
+      target_lang: mapTranslationModelLanguage(targetLanguage),
+    };
+  });
 
-  if (!extractedTexts) {
-    throw new Error(
-      'Subtitle translation could not safely map translated lines back to subtitle indexes. Please shorten the subtitle file or split it manually.'
-    );
+  const response = await env.AI.run('@cf/meta/m2m100-1.2b', { requests });
+  const translatedItems = Array.isArray(response) ? response : response && Array.isArray(response.result) ? response.result : null;
+
+  if (!translatedItems || translatedItems.length !== segments.length) {
+    throw new Error('Subtitle batch translation did not return the expected number of items.');
   }
 
   return segments.map(function(segment, index) {
+    const item = translatedItems[index] || {};
+    const translatedText = getTrimmedParam(item.translated_text) || segment.text;
     return {
       ...segment,
-      text: extractedTexts[index] || segment.text,
+      text: translatedText,
     };
   });
 }
@@ -419,58 +426,6 @@ function buildTaggedTranslationPayload(segments) {
       return '[[' + index + ']] ' + normalizeInlineText(segment && segment.text ? segment.text : '');
     })
     .join('\n');
-}
-
-function buildIndexedSubtitleTranslationPayload(segments) {
-  return segments
-    .map(function(segment, index) {
-      return buildSubtitleIndexMarker(index) + ' ' + normalizeInlineText(segment && segment.text ? segment.text : '');
-    })
-    .join('\n');
-}
-
-function extractIndexedSubtitleTranslations(text, expectedCount) {
-  const lines = normalizeLineEndings(text).split('\n');
-  const extracted = new Array(expectedCount);
-  let currentIndex = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = trimLineEnd(lines[i]);
-    const taggedMatch = line.match(/^\s*(\d+)\s+(.*)$/);
-    const fallbackMatch = taggedMatch ? null : line.match(/^\s*\[\[\[(\d{4,})\]\]\]\s*(.*)$/);
-    const match = taggedMatch || fallbackMatch;
-
-    if (match) {
-      const parsedIndex = Number(match[1]) - 1;
-      if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= expectedCount) {
-        return null;
-      }
-
-      currentIndex = parsedIndex;
-      extracted[currentIndex] = (match[2] || '').trim();
-      continue;
-    }
-
-    if (currentIndex !== -1) {
-      const addition = line.trim();
-      if (!addition) continue;
-      extracted[currentIndex] = extracted[currentIndex]
-        ? extracted[currentIndex] + '\n' + addition
-        : addition;
-    }
-  }
-
-  if (extracted.some(function(value) {
-    return typeof value !== 'string';
-  })) {
-    return null;
-  }
-
-  return extracted;
-}
-
-function buildSubtitleIndexMarker(index) {
-  return String(index + 1);
 }
 
 function extractTaggedTranslations(text, expectedCount) {

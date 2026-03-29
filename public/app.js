@@ -871,7 +871,7 @@ subtitleForm.addEventListener('submit', async function(event) {
 
   currentResultKind = 'subtitle';
   currentResultFileName = file.name;
-  setResultDescription('这里展示的是上传字幕文件翻译后的结果；系统会把字幕整理成 `1 + 文本` 的整份内容直接翻译，再按行首序号回填到原时间轴。');
+  setResultDescription('这里展示的是上传字幕文件翻译后的结果；系统会按字幕段逐条提交给官方批量翻译接口，并把中文回填到原时间轴。');
 
   const progressInterval = startProgress('正在上传字幕文件并整份翻译为中文，请稍候。');
 
