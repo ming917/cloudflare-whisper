@@ -143,7 +143,7 @@ async function handleSubtitleTranslationStatusRequest(request, env) {
   }
 
   const requestId = getTrimmedParam(payload && payload.request_id);
-  const expectedCount = parseOptionalInteger(payload && payload.expected_count);
+  const expectedCount = parseJsonInteger(payload && payload.expected_count);
 
   if (!requestId) {
     return buildJsonResponse({ error: 'Subtitle batch status requires request_id.' }, 400);
@@ -748,6 +748,18 @@ function parseOptionalNumber(value) {
 function parseOptionalInteger(value) {
   const parsed = parseOptionalNumber(value);
   return Number.isInteger(parsed) ? parsed : null;
+}
+
+function parseJsonInteger(value) {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? value : null;
+  }
+
+  if (typeof value === 'string') {
+    return parseOptionalInteger(value);
+  }
+
+  return null;
 }
 
 function normalizeAudioContentType(value) {
