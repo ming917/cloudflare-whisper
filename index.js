@@ -436,8 +436,8 @@ function extractIndexedSubtitleTranslations(text, expectedCount) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = trimLineEnd(lines[i]);
-    const taggedMatch = line.match(/^\s*\[\[\[(\d{4,})\]\]\]\s*(.*)$/);
-    const fallbackMatch = taggedMatch ? null : line.match(/^\s*(\d+)\s*\|\|\|\s*(.*)$/);
+    const taggedMatch = line.match(/^\s*(\d+)\s+(.*)$/);
+    const fallbackMatch = taggedMatch ? null : line.match(/^\s*\[\[\[(\d{4,})\]\]\]\s*(.*)$/);
     const match = taggedMatch || fallbackMatch;
 
     if (match) {
@@ -470,7 +470,7 @@ function extractIndexedSubtitleTranslations(text, expectedCount) {
 }
 
 function buildSubtitleIndexMarker(index) {
-  return '[[[' + String(index + 1).padStart(4, '0') + ']]]';
+  return String(index + 1);
 }
 
 function extractTaggedTranslations(text, expectedCount) {
@@ -519,11 +519,46 @@ async function translateText(text, sourceLanguage, targetLanguage, env) {
 
   const translation = await env.AI.run('@cf/meta/m2m100-1.2b', {
     text: trimmed,
-    source_lang: sourceLanguage,
-    target_lang: targetLanguage,
+    source_lang: mapTranslationModelLanguage(sourceLanguage),
+    target_lang: mapTranslationModelLanguage(targetLanguage),
   });
 
   return getTrimmedParam(translation.translated_text) || text;
+}
+
+function mapTranslationModelLanguage(value) {
+  const normalized = normalizeTranslationLanguage(value) || String(value || '').trim().toLowerCase();
+  const labels = {
+    ar: 'arabic',
+    cs: 'czech',
+    da: 'danish',
+    de: 'german',
+    en: 'english',
+    es: 'spanish',
+    fa: 'persian',
+    fi: 'finnish',
+    fr: 'french',
+    hi: 'hindi',
+    hu: 'hungarian',
+    id: 'indonesian',
+    it: 'italian',
+    ja: 'japanese',
+    ko: 'korean',
+    nl: 'dutch',
+    no: 'norwegian',
+    pl: 'polish',
+    pt: 'portuguese',
+    ro: 'romanian',
+    ru: 'russian',
+    sv: 'swedish',
+    th: 'thai',
+    tr: 'turkish',
+    uk: 'ukrainian',
+    vi: 'vietnamese',
+    zh: 'chinese',
+  };
+
+  return labels[normalized] || normalized;
 }
 
 async function mapWithConcurrency(items, limit, mapper) {
