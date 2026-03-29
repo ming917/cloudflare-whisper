@@ -144,6 +144,142 @@ function convertSegmentsToVTT(segments) {
   return vtt;
 }
 
+function normalizeLineEndings(value) {
+  return String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function trimLineEnd(value) {
+  return String(value || '').replace(/\s+$/, '');
+}
+
+function parseSubtitleTimestamp(value) {
+  const normalized = String(value || '').trim().replace(',', '.');
+  if (!normalized) return null;
+
+  const match = normalized.match(/^(?:(\d{1,2}):)?(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (!match) return null;
+
+  const hours = Number(match[1] || '0');
+  const minutes = Number(match[2] || '0');
+  const seconds = Number(match[3] || '0');
+  const milliseconds = Number((match[4] || '0').padEnd(3, '0'));
+
+  if ([hours, minutes, seconds, milliseconds].some(function(part) {
+    return !Number.isFinite(part);
+  })) {
+    return null;
+  }
+
+  return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+}
+
+function parseCueTimingLine(line) {
+  const match = String(line || '').match(/^\s*([\d:.,]+)\s*-->\s*([\d:.,]+)/);
+  if (!match) return null;
+
+  const start = parseSubtitleTimestamp(match[1]);
+  const end = parseSubtitleTimestamp(match[2]);
+  if (start === null || end === null) return null;
+
+  return { start: start, end: end };
+}
+
+function detectSubtitleFormatFromText(fileName, text) {
+  const lowerName = (fileName || '').toLowerCase();
+  if (lowerName.endsWith('.srt')) return 'srt';
+  if (lowerName.endsWith('.vtt')) return 'vtt';
+  if (/^\uFEFF?WEBVTT/.test(text)) return 'vtt';
+  if (/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/.test(text)) return 'srt';
+  return null;
+}
+
+function parseSRTSegments(text) {
+  const blocks = normalizeLineEndings(text).split(/\n{2,}/);
+  const segments = [];
+
+  for (let i = 0; i < blocks.length; i++) {
+    const lines = blocks[i].split('\n').map(trimLineEnd);
+    if (!lines.length) continue;
+
+    let timingIndex = 0;
+    if (/^\d+$/.test(lines[0].trim()) && lines.length > 1) {
+      timingIndex = 1;
+    }
+
+    const timing = parseCueTimingLine(lines[timingIndex]);
+    if (!timing) continue;
+
+    const cueText = lines.slice(timingIndex + 1).join('\n').trim();
+    if (!cueText) continue;
+
+    segments.push({
+      start: timing.start,
+      end: timing.end,
+      text: cueText,
+    });
+  }
+
+  return segments;
+}
+
+function parseVTTSegments(text) {
+  const blocks = normalizeLineEndings(text)
+    .replace(/^\uFEFF?WEBVTT[^\n]*\n*/, '')
+    .split(/\n{2,}/);
+  const segments = [];
+
+  for (let i = 0; i < blocks.length; i++) {
+    const lines = blocks[i].split('\n').map(trimLineEnd).filter(Boolean);
+    if (!lines.length) continue;
+    if (/^(NOTE|STYLE|REGION)\b/.test(lines[0])) continue;
+
+    const timingIndex = lines.findIndex(function(line) {
+      return line.includes('-->');
+    });
+
+    if (timingIndex === -1) continue;
+
+    const timing = parseCueTimingLine(lines[timingIndex]);
+    if (!timing) continue;
+
+    const cueText = lines.slice(timingIndex + 1).join('\n').trim();
+    if (!cueText) continue;
+
+    segments.push({
+      start: timing.start,
+      end: timing.end,
+      text: cueText,
+    });
+  }
+
+  return segments;
+}
+
+function parseSubtitleDocumentClient(text, fileName) {
+  const normalizedText = normalizeLineEndings(text || '').trim();
+  if (!normalizedText) {
+    throw new Error('Subtitle file is empty.');
+  }
+
+  const format = detectSubtitleFormatFromText(fileName, normalizedText);
+  if (!format) {
+    throw new Error('Unsupported subtitle format. Please upload an SRT or VTT file.');
+  }
+
+  const segments = format === 'vtt' ? parseVTTSegments(normalizedText) : parseSRTSegments(normalizedText);
+  if (!segments.length) {
+    throw new Error('Could not parse subtitle cues. Please upload a valid SRT or VTT subtitle file.');
+  }
+
+  return {
+    format: format,
+    segments: segments,
+    text: segments.map(function(segment) {
+      return segment.text;
+    }).join('\n'),
+  };
+}
+
 function setFieldValue(id, value) {
   const field = document.getElementById(id);
   if (!field) return;
@@ -735,15 +871,15 @@ subtitleForm.addEventListener('submit', async function(event) {
 
   currentResultKind = 'subtitle';
   currentResultFileName = file.name;
-  setResultDescription('这里展示的是上传字幕文件翻译后的结果；建议优先下载 SRT 或 VTT，便于继续剪辑或挂载字幕。');
+  setResultDescription('这里展示的是上传字幕文件翻译后的结果；系统会把字幕整理成 `[[[0001]]] + 文本` 的整份内容直接翻译，再按标记回填到原时间轴。');
 
-  const params = new URLSearchParams({
-    language: normalizedLanguage,
-    filename: file.name,
-  });
-  const progressInterval = startProgress('正在上传字幕文件并分批翻译为中文，请稍候。');
+  const progressInterval = startProgress('正在上传字幕文件并整份翻译为中文，请稍候。');
 
   try {
+    const params = new URLSearchParams({
+      language: normalizedLanguage,
+      filename: file.name,
+    });
     const response = await fetch('/subtitle?' + params.toString(), {
       method: 'POST',
       headers: { 'Content-Type': getSubtitleContentType(file) },

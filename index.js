@@ -263,10 +263,7 @@ async function translateWhisperResponseToChinese(whisperResponse, sourceLanguage
 }
 
 async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLanguage, env) {
-  const translatedSegments = await translateSegments(subtitleDocument.segments, sourceLanguage, 'zh', env, {
-    maxItems: 240,
-    maxCharacters: 28000,
-  });
+  const translatedSegments = await translateIndexedSubtitleSegments(subtitleDocument.segments, sourceLanguage, 'zh', env);
   const translatedText = collectSegmentText(translatedSegments, '\n');
   const translatedResponse = addTranslationMetadata(
     {
@@ -299,6 +296,29 @@ async function translateSubtitleDocumentToChinese(subtitleDocument, sourceLangua
     },
     translation: translatedResponse.translation_info,
   };
+}
+
+async function translateIndexedSubtitleSegments(segments, sourceLanguage, targetLanguage, env) {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return [];
+  }
+
+  const indexedPayload = buildIndexedSubtitleTranslationPayload(segments);
+  const translatedPayload = await translateText(indexedPayload, sourceLanguage, targetLanguage, env);
+  const extractedTexts = extractIndexedSubtitleTranslations(translatedPayload, segments.length);
+
+  if (!extractedTexts) {
+    throw new Error(
+      'Subtitle translation could not safely map translated lines back to subtitle indexes. Please shorten the subtitle file or split it manually.'
+    );
+  }
+
+  return segments.map(function(segment, index) {
+    return {
+      ...segment,
+      text: extractedTexts[index] || segment.text,
+    };
+  });
 }
 
 async function translateSegments(segments, sourceLanguage, targetLanguage, env, options) {
@@ -399,6 +419,58 @@ function buildTaggedTranslationPayload(segments) {
       return '[[' + index + ']] ' + normalizeInlineText(segment && segment.text ? segment.text : '');
     })
     .join('\n');
+}
+
+function buildIndexedSubtitleTranslationPayload(segments) {
+  return segments
+    .map(function(segment, index) {
+      return buildSubtitleIndexMarker(index) + ' ' + normalizeInlineText(segment && segment.text ? segment.text : '');
+    })
+    .join('\n');
+}
+
+function extractIndexedSubtitleTranslations(text, expectedCount) {
+  const lines = normalizeLineEndings(text).split('\n');
+  const extracted = new Array(expectedCount);
+  let currentIndex = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = trimLineEnd(lines[i]);
+    const taggedMatch = line.match(/^\s*\[\[\[(\d{4,})\]\]\]\s*(.*)$/);
+    const fallbackMatch = taggedMatch ? null : line.match(/^\s*(\d+)\s*\|\|\|\s*(.*)$/);
+    const match = taggedMatch || fallbackMatch;
+
+    if (match) {
+      const parsedIndex = Number(match[1]) - 1;
+      if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= expectedCount) {
+        return null;
+      }
+
+      currentIndex = parsedIndex;
+      extracted[currentIndex] = (match[2] || '').trim();
+      continue;
+    }
+
+    if (currentIndex !== -1) {
+      const addition = line.trim();
+      if (!addition) continue;
+      extracted[currentIndex] = extracted[currentIndex]
+        ? extracted[currentIndex] + '\n' + addition
+        : addition;
+    }
+  }
+
+  if (extracted.some(function(value) {
+    return typeof value !== 'string';
+  })) {
+    return null;
+  }
+
+  return extracted;
+}
+
+function buildSubtitleIndexMarker(index) {
+  return '[[[' + String(index + 1).padStart(4, '0') + ']]]';
 }
 
 function extractTaggedTranslations(text, expectedCount) {
@@ -544,7 +616,11 @@ function getPublicErrorMessage(error) {
   }
 
   if (message.includes('Too many subrequests')) {
-    return 'This request triggered too many Worker subrequests. Translation is already batched, but this file is still too large for a single Worker invocation. Try splitting the audio or subtitle file into smaller parts and process them separately.';
+    return 'This request triggered too many Worker subrequests. This usually means the current audio or subtitle content has too many segments or too much text work for a single Worker invocation, not necessarily that the uploaded file is large in bytes. Try splitting the content into smaller parts and process them separately.';
+  }
+
+  if (message.includes('could not safely map translated lines back to subtitle indexes')) {
+    return 'Subtitle translation returned unstable line indexes, so the translated text could not be safely mapped back to subtitle cues. Please shorten the subtitle file or split it manually before retrying.';
   }
 
   if (message) {
